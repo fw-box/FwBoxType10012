@@ -7,12 +7,12 @@
 
 
 #define DEVICE_TYPE 10012
-#define FIRMWARE_VERSION "1.0.1"
+#define FIRMWARE_VERSION "1.0.2"
 
-char ssid[] = "beyond";      // your network SSID (name)
-char pass[] = "Saber12312";  // your network password
+char ssid[] = "YOUR_SSID";      // your network SSID (name)
+char pass[] = "YOUR_PASSWORD";  // your network password
 
-int status  = WL_IDLE_STATUS;    // the Wifi radio's status
+int wifi_status  = WL_IDLE_STATUS;    // the Wifi radio's status
 WiFiClient wifiClient;
 PubSubClient client(wifiClient);  
 
@@ -51,63 +51,13 @@ const int SCK_PIN = 2;
 const int SCALE_FACTOR = -20; //the propotional parameter,different from each person
 HX711 Scale;
 
-void reconnect();
-
-void setup(void) {
-  Serial.begin(9600);
- 
-  u8g2.begin();  
-  u8g2.clear();
-  u8g2.setFont(u8g2_font_ncenB08_tr); //set the font
-  u8g2.firstPage();
-  do {
-     u8g2.setCursor(30 , 64);
-     u8g2.print("connecting...");    
-  } while ( u8g2.nextPage() );
-  
-  while (status != WL_CONNECTED) {
-    Serial.print("Attempting to connect to SSID: ");
-    Serial.println(ssid);
-    // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
-    status = WiFi.begin(ssid, pass);
-    // wait 4 seconds for connection:
-    delay(4000);
-  }
-  
-  u8g2.clear();
-  u8g2.firstPage();
-  do {
-    u8g2.setCursor(17, 70);
-    u8g2.print("connect successed!");    
-  } while ( u8g2.nextPage() );
-  
-  client.setServer(MqttServer, MqttPort);   
-  reconnect();
-  
-  client.setCallback(callback);
-  if (client.connect(Username)){
-    Serial.println("Connection has been established, well done");
-  } 
-  
-  Scale.begin(DT_PIN, SCK_PIN);
-  Scale.set_scale(SCALE_FACTOR);//set the propotional parameter 設定比例參數
-  Scale.tare();//  zero weight sensor 
-   
-  delay(1000);
-  u8g2.clear();
-  u8g2.firstPage();
-  do {
-    u8g2.setCursor(5, 64);
-    u8g2.print("enter weight , number"); 
-  } while ( u8g2.nextPage() );
-  Ledstrip.begin(); //RGB begin
-}
-
-float Measure_Weight = 0;
-float Weight = 0;
-float Number = 0;
+float Measure_Weight = 0.0;
+#define W_COUNT 3
+float Measure_Weight_Average[W_COUNT];
+float TargetWeight = 1; // kg
+float Number = 1;
 float SumWeight = 0 ;
-bool WhetherContinue = false;
+bool WhetherContinue = true;
 bool Next = false ;
 String Str = "\0";
 unsigned long TimeNow = 0;
@@ -115,26 +65,212 @@ unsigned long TimeNow1 = 0;
 unsigned long TimeNow2 = 0;
 unsigned long TimeNow3 = 0;
 
+void reconnect();
+
+float g2kg(float gVal)
+{
+  return (gVal / 1000);
+}
+void uAreaA0Print(const char* msg0, int fontH)
+{
+  u8g2.setCursor(0, 0 + fontH);
+  u8g2.print(msg0);
+  u8g2.sendBuffer();
+}
+void uAreaB0Print(float weight)
+{
+  int pos_x = 45;
+  int font_h = 23;
+  u8g2.setFont(u8g2_font_logisoso16_tf);
+  /*String Str = "";
+  Str += weight;
+  Str += "g";*/
+  char buff[32];
+  sprintf(buff, "%.1fkg", weight);
+  Serial.println(buff);
+  
+  u8g2.setDrawColor(0);// Black
+  u8g2.drawBox(pos_x, 0, 128-75, font_h+6);
+  u8g2.setDrawColor(1); // White
+  //u8g2.drawFrame(pos_x, 0, 128-75, font_h+6);
+  u8g2.setCursor(pos_x, 0 + font_h);
+  u8g2.print(buff);
+  u8g2.sendBuffer();
+}
+void uAreaA1Print(float weight)
+{
+  int font_w = 20;
+  int font_h = 41;
+  u8g2.setFont(u8g2_font_logisoso28_tf);
+  /*Str = "";
+  Str += weight;
+  Str += "g";*/
+  char buff[32];
+  sprintf(buff, "%.1fkg", weight);
+  Serial.println(buff);
+
+  u8g2.setDrawColor(0);// Black
+  u8g2.drawBox(0, 32, 128, font_h + 10);
+  u8g2.setDrawColor(1); // White
+  //u8g2.drawFrame(15, 32, 128 - 30, font_h + 10);
+  
+  //
+  // Center the string
+  //
+  Serial.print("tempx = ");
+  float tempx = strlen(buff);
+  Serial.print(tempx);
+  Serial.print(",");
+  tempx = tempx * font_w;
+  Serial.print(tempx);
+  Serial.print(",");
+  tempx = 128 - tempx;
+  Serial.print(tempx);
+  Serial.print(",");
+  tempx = tempx / 2;
+  Serial.print(tempx);
+  Serial.print("\n");
+  u8g2.setCursor(tempx, 32 + font_h);
+  u8g2.print(buff);
+  u8g2.sendBuffer();
+}
+void uAreaA3Print(const char* msg0, const char* msg1, const char* msg2)
+{
+#define X_MESSAGE 0
+#define Y_MESSAGE 64+32+3
+#define H_CHAR_SMALL 12
+  u8g2.setFont(u8g2_font_7x13_t_symbols);
+  u8g2.setDrawColor(0);// Black
+  u8g2.drawBox(0, 64+20, 128, 64-20);
+  u8g2.setDrawColor(1); // White
+  //u8g2.drawFrame(0, 64+20, 128, 64-20);
+  if (strlen(msg0) > 0) {
+    u8g2.setCursor(X_MESSAGE, Y_MESSAGE + (H_CHAR_SMALL * 0));
+    u8g2.print(msg0);
+  }
+  if (strlen(msg1) > 0) {
+    u8g2.setCursor(X_MESSAGE, Y_MESSAGE + (H_CHAR_SMALL * 1));
+    u8g2.print(msg1);
+  }
+  if (strlen(msg2) > 0) {
+    u8g2.setCursor(X_MESSAGE, Y_MESSAGE + (H_CHAR_SMALL * 2));
+    u8g2.print(msg2);
+  }
+  u8g2.sendBuffer();
+}
+
+void setup(void) {
+  Serial.begin(115200);
+ 
+  u8g2.begin();  
+  u8g2.enableUTF8Print();    // enable UTF8 support for the Arduino print() function
+  u8g2.setFontDirection(0);
+  u8g2.clearBuffer();
+
+  u8g2.setFont(u8g2_font_7x13_t_symbols);
+  uAreaA0Print("target", 11);
+  
+  SumWeight =  TargetWeight * Number; //count the total weight
+  uAreaB0Print(SumWeight);
+
+  uAreaA1Print(0);
+
+  u8g2.setFont(u8g2_font_7x13_t_symbols); //set the font
+  uAreaA3Print("connecting...", "", ""); 
+  
+  for (int i = 0; i < 3; i++) {
+    Serial.print("Attempting to connect to SSID: ");
+    Serial.println(ssid);
+    // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+    wifi_status = WiFi.begin(ssid, pass);
+    if (wifi_status == WL_CONNECTED)
+      break;
+    // wait 4 seconds for connection:
+    delay(4000);
+  }
+
+  if (wifi_status == WL_CONNECTED) {
+
+    uAreaA3Print("connect successed!", "", ""); 
+    
+    client.setServer(MqttServer, MqttPort);   
+    reconnect();
+    
+    client.setCallback(callback);
+    if (client.connect(Username)){
+      Serial.println("Connection has been established, well done");
+    }
+  }
+  else {
+    uAreaA3Print("failed to connect", "", "");
+  }
+  
+  Scale.begin(DT_PIN, SCK_PIN);
+  Scale.set_scale(SCALE_FACTOR);//set the propotional parameter 設定比例參數
+  Scale.tare();//  zero weight sensor 
+   
+  delay(1000);
+
+  uAreaA3Print("enter", "weight , number", "");
+  Ledstrip.begin(); //RGB begin
+
+  //
+  // Init the array.
+  //
+  Measure_Weight_Average[0] = g2kg(Scale.get_units(10)); //measure the weight
+  for (int ii = 1; ii < W_COUNT; ii++) {
+    Measure_Weight_Average[ii] = Measure_Weight_Average[0];
+  }
+}
+
+float calAverage(float weight)
+{
+  static int ai = 0;
+  Measure_Weight_Average[ai] = weight;
+
+  float w_sum = 0;
+  for (int ii = 0; ii < W_COUNT; ii++) {
+    w_sum += Measure_Weight_Average[ii];
+  }
+
+  ai++;
+  if (ai >= W_COUNT)
+    ai = 0;
+
+  return (w_sum / W_COUNT);
+}
 void loop(void) {
-  client.loop();
+  if (client.connected()) {
+    client.loop();
+  }
   while(WhetherContinue){ 
     if(millis()- TimeNow > 5){
       TimeNow = millis(); 
-      client.loop();
+      if (client.connected()) {
+        client.loop();
+      }
     }
+
+    float temp_val = Scale.get_units(10);
+    float temp_val2 = g2kg(temp_val);
+    float temp_val3 = calAverage(temp_val2);
+    Serial.print("temp_val,temp_val2,temp_val3=");
+    Serial.print(temp_val);
+    Serial.print(",");
+    Serial.print(temp_val2);
+    Serial.print(",");
+    Serial.println(temp_val3);
+    Measure_Weight = calAverage(g2kg(Scale.get_units(10))); //measure the weight
+    //Serial.printf("temp_val,temp_val2,temp_val3=%f,%f,%f\n", temp_val,temp_val2,temp_val3);
+    //if(Measure_Weight < 0) Measure_Weight = 0 ;
+    uAreaA1Print(Measure_Weight);
+    
     if(millis()- TimeNow1 > 3000 && millis() > TimeNow1 ){
-      Measure_Weight = Scale.get_units(10); //measure the weight
-   // Serial.println(Measure_Weight);
-      if(Measure_Weight < 0) Measure_Weight = 0 ;
-      String a ="/0";
-      Str = "total weight : ";
-      Str = Str + String(Measure_Weight);
-      u8g2.clear();
-      u8g2.firstPage();
-      do {
-        u8g2.setCursor(10, 64);
-        u8g2.print(Str);   //display the measure_weight message
-      } while ( u8g2.nextPage() );
+      //Str = String((int)Measure_Weight) + "g";
+      char buff[32];
+      sprintf(buff, "%.1fkg", Measure_Weight);
+      uAreaA3Print("total weight : ", buff, "");
+      
       TimeNow1 = 12000.0 + millis() ; //avoid collison with another time
       TimeNow3 = 12000.0 + millis() ; //avoid collison with another time
       TimeNow2 = millis(); 
@@ -148,40 +284,27 @@ void loop(void) {
       Serial.println(Measure_Weight*0.05  );
       */
       if( fabs(SumWeight - Measure_Weight)> SumWeight*0.05 ){ //if measure_weight smaller or bigger than 0.95 time total_weight
-        int need_number = fabs(SumWeight - Measure_Weight)/Weight ;
+        int need_number = fabs(SumWeight - Measure_Weight)/TargetWeight ;
         if(need_number == 0)need_number = 1;
-        ///
-        ///the payload format to IdeasChain and MQTT Dash to get the relevant value
-        ///
-        b="{\"Measure_Weight\":\""+ String(Measure_Weight) +"\",\"weight\":\"" + String(Weight) + "\",\"number\":\"" + String(Number) + "\",\"Y/N\":\"N\",\"color\":\"#ff0000\",\"need\":\""+String(need_number)+"\"}";
-        Serial.println(b);
-        client.publish(PublishTopic, b.c_str());
+        if (client.connected()) {
+          ///
+          ///the payload format to IdeasChain and MQTT Dash to get the relevant value
+          ///
+          b="{\"Measure_Weight\":\""+ String(Measure_Weight) +"\",\"Target_Weight\":\"" + String(TargetWeight) + "\",\"number\":\"" + String(Number) + "\",\"Y/N\":\"N\",\"color\":\"#ff0000\",\"need\":\""+String(need_number)+"\"}";
+          Serial.println(b);
+          client.publish(PublishTopic, b.c_str());
+        }
         // Serial.println(need_number);
         Str = "need  ";
         Str  = Str + String(need_number);
-        u8g2.clear();
+        //u8g2.clear();
         if(SumWeight - Measure_Weight < 0){ //measure_weight smaller or bigger than 0.95 total_weigh
-          u8g2.firstPage();
-          do {
-            u8g2.setCursor(50, 40);
-            u8g2.print("fail!!");
-            u8g2.setCursor(46, 60);
-            u8g2.print(Str); //display the elements you need to increase message
-            u8g2.setCursor(25, 80);
-            u8g2.print("more elements");   
-          } while ( u8g2.nextPage() );
+          uAreaA3Print("fail!!", Str.c_str(), "more elements");
         }
         else{
-          do {
-            u8g2.setCursor(50, 40);
-            u8g2.print("fail!!");
-            u8g2.setCursor(46, 60);
-            u8g2.print(Str);  //display the elements you need decrease message
-            u8g2.setCursor(25, 80);
-            u8g2.print("less elements");   
-          } while ( u8g2.nextPage() );
+          uAreaA3Print("fail!!", Str.c_str(), "less elements");
         }
-        for(int i = 0 ; i < 8 ; i++){
+        for(int i = 0 ; i < 8 ; i+=3){
           Ledstrip.setPixelColor(i,255,0,0); //All_RGB_to_Red
         }
         Ledstrip.show();
@@ -191,16 +314,15 @@ void loop(void) {
         ///
         ///the payload format to IdeasChain and MQTT Dash to get the relevant value
         ///
-        c="{\"Measure_Weight\":\""+ String(Measure_Weight) +"\",\"weight\":\"" + String(Weight) + "\",\"number\":\"" + String(Number) + "\",\"Y/N\":\"Y\",\"color\":\"#00ff11\"}";
-        client.publish(PublishTopic, c.c_str());
+        c="{\"Measure_Weight\":\""+ String(Measure_Weight) +"\",\"Target_Weight\":\"" + String(TargetWeight) + "\",\"number\":\"" + String(Number) + "\",\"Y/N\":\"Y\",\"color\":\"#00ff11\"}";
+        if (client.connected()) {
+          client.publish(PublishTopic, c.c_str());
+        }
         Serial.println(c);
-        u8g2.firstPage();
-        do {
-          u8g2.setCursor(35, 64);
-          u8g2.print("success!!");
-        } while ( u8g2.nextPage() );
+        
+        uAreaA3Print("success!!", "", "");
     
-        for(int i = 0 ; i < 8 ; i++){
+        for(int i = 0 ; i < 8 ; i+=3){
           Ledstrip.setPixelColor(i,0,255,0); //All_RGB_to_Green
         }
         Ledstrip.show();
@@ -210,14 +332,9 @@ void loop(void) {
       TimeNow3 = millis();
     }
     if(millis()- TimeNow3 > 3000 && millis() > TimeNow3 ){
-      u8g2.clear();
-      u8g2.firstPage();
-      do {
-        u8g2.setCursor(10, 64);
-        u8g2.print("continue measuring");    
-      } while ( u8g2.nextPage() );
-      for(int i = 0 ; i < 8 ; i++){
-        Ledstrip.setPixelColor(i,0,0,0);
+      uAreaA3Print("continue measuring", "", "");
+      for(int i = 0 ; i < 8 ; i+=3){
+        Ledstrip.setPixelColor(i,85,85,85);
       }
       Ledstrip.show();
     Next = true;
@@ -230,21 +347,18 @@ void loop(void) {
   /// set up to next goods (weight and number)
   ///  
   if(Next){
-   u8g2.clear();
-   u8g2.firstPage();
-   do {
-     u8g2.setCursor(5, 64);
-     u8g2.print("enter weight , number");    
-   } while ( u8g2.nextPage() );
-   for(int i = 0 ; i < 8 ; i++){
-     Ledstrip.setPixelColor(i,0,0,0); //stop RGB  
+   uAreaA3Print("enter", "weight , number", "");
+   for(int i = 0 ; i < 8 ; i+=3){
+     Ledstrip.setPixelColor(i,85,85,85); //stop RGB  
    }
    Ledstrip.show();
    Next = false;
   }
-  if(!client.connected()){
-     reconnect();
-     delay(2000);
+  if (wifi_status == WL_CONNECTED) {
+    if (!client.connected()) {
+       reconnect();
+       delay(2000);
+    }
   }
 }
 
@@ -277,15 +391,12 @@ void callback(char* topic, byte* payload, unsigned int length) {
     else if(cnt==15) number_str = number_str + (char)payload[i];
   }
   Serial.println();
-  Weight = atof(weight_str.c_str());
+  TargetWeight = atof(weight_str.c_str());
   Number = atof(number_str.c_str());
-  SumWeight =  Weight * Number; //count the total weight
-  u8g2.clear();
-  u8g2.firstPage();
-  do {
-    u8g2.setCursor(20, 64);
-    u8g2.print("start measuring");    
-  } while ( u8g2.nextPage() );
+  SumWeight =  TargetWeight * Number; //count the total weight
+
+  uAreaA3Print("start measuring", "", ""); 
+
   WhetherContinue = true; //set up continue measure
   delay(3000);
   TimeNow = millis(); //initialize time
